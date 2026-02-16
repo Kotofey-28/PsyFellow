@@ -1,0 +1,429 @@
+import telebot
+from pyexpat.errors import messages
+from telebot import types
+import pandas as pd
+import networkx as nx
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
+
+
+token = '8376821327:AAE71nWHKM9mz-LtPXzuCWIbtXM33nKyCXs'
+bot = telebot.TeleBot(token)
+
+
+def something_went_wrong(message):
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    menu_button = types.KeyboardButton('❮❮Вернуться в меню')
+    markup.add(menu_button)
+
+    bot.send_message(message.chat.id, 'Что-то пошло не так... Пожалуйста, попробуйте заново',
+                     reply_markup=markup)
+
+@bot.message_handler(commands=['start'])
+def start(message): #Стартовая функция
+    try:
+        markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+        hi_button = types.KeyboardButton('👋 Поздороваться')
+        markup.add(hi_button)
+        bot.send_message(message.chat.id, 'Привет! Я помощник для психологов. '
+                                          'Я умею строить графы взаимосвязей '
+                                          'по таблице группового опроса! Звучит круто)',
+                         reply_markup=markup)
+        bot.register_next_step_handler(message, menu_actions)
+    except (Exception, TimeoutError):
+        bot.register_next_step_handler(message, something_went_wrong)
+
+def menu_actions(message): #Главное меню бота
+    try:
+        markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+
+        start_work_button = types.KeyboardButton('Начать работу✍️')
+        info_button1 = types.KeyboardButton('Посмотреть пример опроса в классе📝')
+        info_button2 = types.KeyboardButton('Как самому заполнить таблицу?🧔')
+        info_button3 = types.KeyboardButton('Посмотреть пример опроса в яндекс формах💻')
+        info_button4 = types.KeyboardButton('Информация о ботеℹ️')
+        info_button5 = types.KeyboardButton('Посмотреть пример графа📈')
+
+        markup.add(start_work_button, info_button1, info_button2, info_button3, info_button4, info_button5, row_width=2)
+
+        bot.send_message(message.chat.id, 'Приступим к работе! Здесь ты можешь '
+                                          'посмотреть информацию про меня и формат файла, '
+                                          'с которым мне будет удобно работать😊',
+                         reply_markup=markup)
+        bot.register_next_step_handler(message, choose_action)
+    except (Exception, TimeoutError):
+        bot.register_next_step_handler(message, something_went_wrong)
+
+def choose_action(message): #Выбор действия
+    try:
+        if message.text == 'Начать работу✍️':
+            start_work(message)
+        elif message.text == 'Посмотреть пример опроса в классе📝':
+            info_questionnaire(message)
+        elif message.text == 'Как самому заполнить таблицу?🧔':
+            info_table(message)
+        elif message.text == 'Посмотреть пример опроса в яндекс формах💻':
+            info_yandex_forms(message)
+        elif message.text == 'Информация о ботеℹ️':
+            info_bot(message)
+        elif message.text == 'Посмотреть пример графа📈':
+            info_graph(message)
+        else:
+            menu_actions(message)
+    except (Exception, TimeoutError):
+        bot.register_next_step_handler(message, something_went_wrong)
+
+def start_work(message): #Начало работы
+    try:
+        markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+        excel_self_table_button = types.KeyboardButton('Отправить самостоятельно заполненную excel-таблицу📂')
+        yandex_forms_table_button = types.KeyboardButton('Отправить excel-таблицу результатов опроса в Яндекс форме🗂️')
+        menu_button = types.KeyboardButton('❮❮Вернуться в меню')
+        markup.add(excel_self_table_button, yandex_forms_table_button, menu_button, row_width=1)
+
+        bot.send_message(message.chat.id, 'Какую таблицу вы хотите отправить?🤔',
+                         reply_markup=markup)
+        bot.register_next_step_handler(message, choose_work_format)
+    except (Exception, TimeoutError):
+        bot.register_next_step_handler(message, something_went_wrong)
+
+def choose_work_format(message): #Выбор формата таблицы
+    try:
+        if message.text == 'Отправить самостоятельно заполненную excel-таблицу📂' or message.text == 'Отправить excel-таблицу результатов опроса в Яндекс форме🗂️':
+            global answer_work_format
+            answer_work_format = message.text
+            send_table(message)
+        else:
+            start_work(message)
+    except (Exception, TimeoutError):
+        bot.register_next_step_handler(message, something_went_wrong)
+
+def send_table(message):
+    try:
+        markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+        menu_button = types.KeyboardButton('❮❮Вернуться в меню')
+        markup.add(menu_button)
+
+        bot.send_message(message.chat.id, '⏳Отправьте мне таблицу в формате xls или xlsx',
+                         reply_markup=markup)
+    except (Exception, TimeoutError):
+        bot.register_next_step_handler(message, something_went_wrong)
+
+    @bot.message_handler(content_types=['text'], func=lambda message: message.text != '❮❮Вернуться в меню')
+    def file_please(message): #Проверка на файл
+        try:
+            bot.send_message(message.chat.id, '🙏Пожалуйста, отправьте файл',
+                             reply_markup=markup)
+        except Exception:
+            bot.register_next_step_handler(message, something_went_wrong)
+
+    @bot.message_handler(content_types=['document'])
+    def get_table(message):
+        try:
+            global file_name
+            file_name = message.document.file_name
+            file_name_splited = file_name.split('.')
+            if file_name_splited[-1] != 'xls' and file_name_splited[-1] != 'xlsx': #Проверка на таблицу
+                send_table(message)
+                return
+            else:
+                bot.send_message(message.chat.id, 'Файл получен, приступаю к работе⚙️',
+                                 reply_markup=markup)
+                if answer_work_format == 'Отправить самостоятельно заполненную excel-таблицу📂':
+                    work_with_self_excel_table(message)
+                else:
+                    work_with_yandex_form_excel_table(message)
+        except Exception:
+            bot.register_next_step_handler(message, something_went_wrong)
+
+def work_with_self_excel_table(message):
+    try:
+        file_info = bot.get_file(message.document.file_id)
+        downloaded_file = bot.download_file(file_info.file_path)
+
+        with open(file_name, 'wb') as table:
+            table.write(downloaded_file)
+
+        df = pd.read_excel(file_name) #Перевод таблицы в DataFrame
+        global nodes, weighted_edges, degrees
+        nodes = []
+        weighted_edges = []
+        edges_for_max_min = []
+        degrees = {}
+
+        for ind in df.index: #Заполнение списка рёбер
+            for column in df.columns[1:]:
+                if str(df.loc[ind, column]).isdigit() and df.loc[ind, column] > 0:
+                    weighted_edges.append(('\n'.join(str(df.loc[ind, df.columns[0]]).split()), '\n'.join(column.split()), df.loc[ind, column]))
+                    edges_for_max_min.append((df.loc[ind, df.columns[0]], column, df.loc[ind, column]))
+
+        for node in df.columns[1:]: #Заполнение списка вершин
+            nodes.append('\n'.join(node.split()))
+
+        nodes_for_max_min = []
+        for node1 in df.columns[1:]:
+            nodes_for_max_min.append(node1)
+
+        global max_person
+        max_choices = 0
+        max_person = ''
+        for i in nodes_for_max_min: #Выявление чаще всего выбираемого
+            count_choices = 0
+            for j in edges_for_max_min:
+                if j[1] == i:
+                    count_choices += j[2]
+            if count_choices == max_choices:
+                max_choices = count_choices
+                max_person = max_person + i + ' '
+            elif count_choices > max_choices:
+                max_choices = count_choices
+                max_person = i + ' '
+            degrees[i] = int(count_choices)
+        degrees = dict(sorted(degrees.items(), key=lambda item: item[1], reverse=True))
+
+        global min_person
+        min_choices = max_choices
+        min_person = ''
+        for i in nodes_for_max_min: #Выявление реже всего выбираемого
+            count_choices = 0
+            for j in edges_for_max_min:
+                if j[1] == i:
+                    count_choices += j[2]
+            if count_choices == min_choices:
+                min_choices = count_choices
+                min_person = min_person + i + ' '
+            elif count_choices < min_choices:
+                min_choices = count_choices
+                min_person = i + ' '
+
+        draw_graph(message)
+    except (Exception, TimeoutError):
+        bot.register_next_step_handler(message, something_went_wrong)
+
+def work_with_yandex_form_excel_table(message):
+    try:
+        file_info = bot.get_file(message.document.file_id)
+        downloaded_file = bot.download_file(file_info.file_path)
+
+        with open(file_name, 'wb') as table:
+            table.write(downloaded_file)
+
+        df = pd.read_excel(file_name)
+        global nodes, weighted_edges, degrees, max_person, min_person
+        nodes = []
+        weighted_edges = []
+        degrees = {}
+        set_edges = set()
+        max_person = ''
+        min_person = ''
+
+        for ind in df.index: #Заполнение списка рёбер
+            for column in df.columns[1:]:
+                if (''.join(str(df.loc[ind, column]).split())).isalpha() and (''.join(str(df.loc[ind, df.columns[0]]).split())).isalpha() and df.loc[ind, column] != '' and df.loc[ind, df.columns[0]] != '' and df.loc[ind, column] != df.loc[ind, df.columns[0]]:
+                    set_edges.add(('\n'.join(str(df.loc[ind, df.columns[0]]).split()), '\n'.join(str(df.loc[ind, column]).split()), 1))
+        weighted_edges = list(set_edges)
+
+        for node in df.index: #Заполнение списка вершин
+            nodes.append('\n'.join(df.loc[node, df.columns[0]].split()))
+
+        for human in df.index: #Заполнение словаря с кол-вом выборов каждого человека
+            count_choices = 0
+            for ind in df.index:
+                for column in df.columns[1:]:
+                    if df.loc[ind, column] == df.loc[human, df.columns[0]] and df.loc[ind, column] != df.loc[ind, df.columns[0]]:
+                        count_choices += 1
+            degrees[df.loc[human, df.columns[0]]] = count_choices
+
+        degrees = dict(sorted(degrees.items(), key=lambda item: item[1], reverse=True))
+
+        max_choices = 0
+        for name, choices in degrees.items(): #Выявление чаще всего выбираемого
+            if choices > max_choices:
+                max_choices = choices
+                max_person = name
+            elif choices == max_choices:
+                max_person = max_person + ' ' + name
+
+        min_choices = max_choices
+        for name, choices in degrees.items(): #Выявление реже всего выбираемого
+            if choices < min_choices:
+                min_choices = choices
+                min_person = name
+            elif choices == min_choices:
+                min_person = min_person + ' ' + name
+
+        draw_graph(message)
+    except (Exception, TimeoutError):
+        bot.register_next_step_handler(message, something_went_wrong)
+
+def draw_graph(message): #Построение графа
+    try:
+        G = nx.DiGraph(directed=True)
+        G.add_nodes_from(nodes)
+        G.add_weighted_edges_from(weighted_edges)
+
+        edge_labels = nx.get_edge_attributes(G, 'weight')
+        pos = nx.kamada_kawai_layout(G)
+        graph_nodes_size = 2000-(len(nodes)*50)
+
+        nx.draw(G, pos, with_labels=True, font_size=graph_nodes_size*0.01, node_size=graph_nodes_size, node_color='lightblue', arrowsize=6.5, width=0.5)
+        #nx.draw_networkx_edge_labels(G, pos, edge_labels=edge_labels, label_pos=0.95*(1-(len(nodes)*0.01*1.5)), font_color='red', font_size=6)
+
+        plt.savefig('socio-graph.png')
+        plt.close()
+
+        bot.send_message(message.chat.id, 'Всё получилось🎉\nВот готовый граф:')
+        with open('socio-graph.png', 'rb') as graph:
+            bot.send_photo(message.chat.id, graph)
+        extra_info(message)
+    except (Exception, TimeoutError):
+        bot.register_next_step_handler(message, something_went_wrong)
+
+def extra_info(message): #Выдача дополнительных сведений
+    try:
+        markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+        menu_button = types.KeyboardButton('❮❮Вернуться в меню')
+        max_choices_button = types.KeyboardButton('📈Кого выбирали чаще всего?')
+        min_choices_button = types.KeyboardButton('📉Кого выбирали реже всего?')
+        each_choices_button = types.KeyboardButton('📊Сколько раз выбирали каждого человека?')
+        markup.add(max_choices_button, min_choices_button, each_choices_button, menu_button, row_width=2)
+
+        bot.send_message(message.chat.id, '⚡Я могу дать немного дополнительной информации:',
+                         reply_markup=markup)
+    except (Exception, TimeoutError):
+        bot.register_next_step_handler(message, something_went_wrong)
+
+@bot.message_handler(func=lambda message: message.text == '❮❮Вернуться обратно')
+def back_to_submenu(message):
+    extra_info(message)
+
+
+@bot.message_handler(func=lambda message: message.text == '📈Кого выбирали чаще всего?')
+def max_choices_person(message): #Самый популярный человек в группе
+    try:
+        markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+        submenu_button = types.KeyboardButton('❮❮Вернуться обратно')
+        menu_button = types.KeyboardButton('❮❮Вернуться в меню')
+        markup.add(submenu_button, menu_button, row_width=1)
+
+        bot.send_message(message.chat.id, f'Больше всего чужих выборов имеет(ют): {max_person}',
+                         reply_markup=markup)
+    except (Exception, TimeoutError):
+        bot.register_next_step_handler(message, something_went_wrong)
+
+@bot.message_handler(func=lambda message: message.text == '📉Кого выбирали реже всего?')
+def min_choices_person(message): #Самый не популярный человек в группе
+    try:
+        markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+        submenu_button = types.KeyboardButton('❮❮Вернуться обратно')
+        menu_button = types.KeyboardButton('❮❮Вернуться в меню')
+        markup.add(submenu_button, menu_button, row_width=1)
+
+        bot.send_message(message.chat.id, f'Меньше всего чужих выборов имеет(ют): {min_person}',
+                         reply_markup=markup)
+    except (Exception, TimeoutError):
+        bot.register_next_step_handler(message, something_went_wrong)
+
+@bot.message_handler(func=lambda message: message.text == '📊Сколько раз выбирали каждого человека?')
+def each_student_choices(message): #Сколько раз выбирали каждого человека в группе
+    try:
+        markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+        submenu_button = types.KeyboardButton('❮❮Вернуться обратно')
+        menu_button = types.KeyboardButton('❮❮Вернуться в меню')
+        markup.add(submenu_button, menu_button, row_width=1)
+
+        bot.send_message(message.chat.id, f'📃Вот список (рядом с именем - то, сколько раз выбрали этого человека): \n{degrees}',
+                         reply_markup=markup)
+    except (Exception, TimeoutError):
+        bot.register_next_step_handler(message, something_went_wrong)
+
+def info_table(message): #Информация как заполнять таблицу
+    try:
+        markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+        menu_button = types.KeyboardButton('❮❮Вернуться в меню')
+        markup.add(menu_button)
+
+        bot.send_message(message.chat.id, 'Этапы заполнения таблицы:\n'
+                                          '1) В 1 строку и 1 столбец записать ФИ учеников в одинаковом порядке '
+                                          '(в столбце - те, кто выбирает; в строке - те, кого выбирают\n'
+                                          '2) В ячейках пересечений учеников с самими собой поставить -\n'
+                                          '3) Для каждого ученика из столбца написать кол-во выборов каждого '
+                                          'ученика из строки (при отсутствии поставить 0)\n'
+                                          'На фото приведен пример такой таблицы:')
+        bot.send_photo(message.chat.id, 'https://disk.yandex.ru/i/gBW4wxIEX7WLqw',
+                       reply_markup=markup)
+    except (Exception, TimeoutError):
+        bot.register_next_step_handler(message, something_went_wrong)
+
+def info_yandex_forms(message): #Информация как использовать Яндекс формы
+    try:
+        markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+        menu_button = types.KeyboardButton('❮❮Вернуться в меню')
+        markup.add(menu_button)
+        bot.send_message(message.chat.id, 'Ниже приведена ссылка на опрос и его фото (придерживайтесь того формата, '
+                                          'как на фото, иначе результат моей работы будет плохим😢)')
+        bot.send_message(message.chat.id, 'https://forms.yandex.ru/u/6976514f84227c0b49fb5897')
+        bot.send_photo(message.chat.id, 'https://disk.yandex.ru/i/_3b0bBm3aVWHBQ',
+                       reply_markup=markup)
+    except (Exception, TimeoutError):
+        bot.register_next_step_handler(message, something_went_wrong)
+
+
+def info_questionnaire(message): #Пример опроса
+    try:
+        markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+        menu_button = types.KeyboardButton('❮❮Вернуться в меню')
+        markup.add(menu_button)
+
+        bot.send_message(message.chat.id, '📌Для составления таблицы и графа используется методика '
+                                          '"Социометрия", разработанная Дж. Морено. Она основана на '
+                                          'положительных и отрицательных выборах. Упор сделан на '
+                                          'положительные выборы, но при желании можно сделать '
+                                          'идентичный опрос на отрицательные выборы. В каждом '
+                                          'из 3 вопросов ученик должен указать 3 человека')
+        bot.send_message(message.chat.id, 'Вот стандартные вопросы на положительные выборы:\n'
+                                          '1) Кого бы ты из класса пригласил(а) на свой день рождения?\n'
+                                          '2) Если ваш клас расформируют, с кем бы ты хотел(а) продолжить обучение?\n'
+                                          '3) С кем из класса ты бы хотел(а) пойти в многодневный поход?',
+                         reply_markup=markup)
+    except (Exception, TimeoutError):
+        bot.register_next_step_handler(message, something_went_wrong)
+
+def info_bot(message): #Информация о боте
+    try:
+        markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+        menu_button = types.KeyboardButton('❮❮Вернуться в меню')
+        markup.add(menu_button)
+
+        bot.send_message(message.chat.id, 'Я бот для упрощения работы психологов. '
+                                          'Меня зовут \nPsyFellow🧠, что в переводе означает '
+                                          '"Товарищ психолога". Я таковым и являюсь - '
+                                          'верным товарищем) Я могу построить граф взаимосвязей '
+                                          'людей в группе, например, по графу будет видно, '
+                                          'кто с кем дружит, кто самый популярный в группе, '
+                                          'а кто, наоборот, тихоня. Граф для психолога - '
+                                          'полезный и удобный инструмент. Надеюсь, тебе понравится моя работа🤗',
+                         reply_markup=markup)
+    except (Exception, TimeoutError):
+        bot.register_next_step_handler(message, something_went_wrong)
+
+def info_graph(message): #Пример графа
+    try:
+        markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+        menu_button = types.KeyboardButton('❮❮Вернуться в меню')
+        markup.add(menu_button)
+
+        bot.send_message(message.chat.id, 'Вот пример графа, который я могу построить:')
+        bot.send_photo(message.chat.id, 'https://disk.yandex.ru/i/QGjrSboV06CcmQ',
+                       reply_markup=markup)
+    except (Exception, TimeoutError):
+        bot.register_next_step_handler(message, something_went_wrong)
+
+
+@bot.message_handler(content_types=['text'], func=lambda message: message.text == '❮❮Вернуться в меню')
+def back_to_menu(message): #Возвращение в главное меню
+    menu_actions(message)
+
+
+bot.polling(none_stop=True, interval=0) #Бесконечное выполнение работы бота
